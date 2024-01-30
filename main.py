@@ -3,7 +3,7 @@ import requests
 
 app = Flask(__name__)
 
-@app.route('/', methods=['GET'])
+@app.route('/members', methods=['GET'])
 def fetch_dao_data():
     # API endpoint
     url = "https://hub.snapshot.org/graphql"
