@@ -57,7 +57,7 @@ def fetch_dao_data():
     url = "https://hub.snapshot.org/graphql"
 
     # Get 'first' parameter from query string, default to 200 if not provided
-    first_param = request.args.get('first', default=200, type=int)
+    first_param = request.args.get('first', default=500, type=int)
 
     # GraphQL query
     query = """
