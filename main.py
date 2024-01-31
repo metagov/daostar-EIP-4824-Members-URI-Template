@@ -56,13 +56,13 @@ def fetch_dao_data():
     # API endpoint
     url = "https://hub.snapshot.org/graphql"
 
-    # Get 'first' parameter from query string, default to 200 if not provided
+    # Get 'first' parameter from query string, default to 500 if not provided
     first_param = request.args.get('first', default=500, type=int)
 
     # GraphQL query
     query = """
-    query ($followsWhere2: FollowWhere, $first: Int!) {
-      votes(where: $followsWhere2, first: $first) {
+    query Votes($where: VoteWhere, $first: Int!) {
+      votes(where: $where, first: $first) {
         id
       }
     }
@@ -70,7 +70,7 @@ def fetch_dao_data():
 
     # Variables for the query
     variables = {
-        "followsWhere2": {
+        "where": {
             "space": "lodestarfinance.eth"
         },
         "first": first_param  # Use the parameter from the query string
@@ -82,17 +82,17 @@ def fetch_dao_data():
     if response.status_code == 200:
         # Parsing the response
         data = response.json()
-        followers = data['data']['follows']
+        members = data['data']['votes']
 
         # Preparing the formatted JSON according to DAO URI
-        formatted_followers = {
-            "members": [{"id": follower["id"], "type": "EthereumAddress"} for follower in followers],
+        formatted_members = {
+            "members": [{"id": member["id"], "type": "EthereumAddress"} for member in members],
             "@context": {"@vocab": "http://daostar.org/"},
             "type": "DAO",
             "name": "lodestarfinance.eth"
         }
 
-        return jsonify(formatted_followers)
+        return jsonify(formatted_members)
     else:
         return jsonify({"error": "Failed to fetch data"}), response.status_code
 
