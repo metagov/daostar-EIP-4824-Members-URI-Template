@@ -62,7 +62,7 @@ def fetch_dao_data():
     # GraphQL query
     query = """
     query ($followsWhere2: FollowWhere, $first: Int!) {
-      follows(where: $followsWhere2, first: $first) {
+      votes(where: $followsWhere2, first: $first) {
         id
       }
     }
