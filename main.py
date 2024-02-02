@@ -59,32 +59,60 @@ def fetch_votes_paginated(space, order_direction='asc', initial_created_gt=None)
 
     while True:
         query = """
-        query Votes($where: VoteWhere, $orderDirection: OrderDirection) {
+        query ($spaceId: String!, $where: VoteWhere, $orderDirection: OrderDirection) {
           votes(where: $where, orderDirection: $orderDirection) {
             created
             voter
           }
+          space(id: $spaceId) {
+            admins
+            members
+            moderators
+            }
         }
         """
         variables = {
+            "spaceId": space,
             "where": {"space": space, "created_gt": created_gt} if created_gt else {"space": space},
             "orderDirection": order_direction
         }
-
+        
         response = requests.post(url, json={'query': query, 'variables': variables})
         if response.status_code == 200:
-            data = response.json()['data']['votes']
-            if not data:
-                break  
+            data = response.json()['data']
+            votes = data['votes']
 
-            created_gt = data[-1]['created']  
+        for vote in votes:
+            unique_voters.add(vote['voter'])
 
-            for vote in data:
-                unique_voters.add(vote['voter'])
-        else:
-            raise Exception(f"Failed to fetch data, status code: {response.status_code}")
+        space_info = data['space']
+        for admin in space_info['admins']:
+            unique_voters.add(admin)
+        for member in space_info['members']:
+            unique_voters.add(member)
+        for moderator in space_info['moderators']:
+            unique_voters.add(moderator)
 
-    return unique_voters
+        # If there are votes, prepare for pagination
+        while votes:
+            created_gt = votes[-1]['created']
+            variables['where']['created_gt'] = created_gt
+            response = requests.post(url, json={'query': query, 'variables': variables})
+            if response.status_code == 200:
+                data = response.json()['data']['votes']
+                if not data:
+                    break  # Stop if no more votes are returned
+
+                # Add voters to the unique set from the paginated results
+                for vote in data:
+                    unique_voters.add(vote['voter'])
+                votes = data
+            else:
+                raise Exception(f"Failed to fetch data, status code: {response.status_code}")
+            
+        return unique_voters
+
+
 
 @app.route('/members', methods=['GET'])
 def get_unique_voters():
