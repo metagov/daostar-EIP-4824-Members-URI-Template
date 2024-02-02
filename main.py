@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request  # Import 'request' from flask
+from flask import Flask, jsonify
 import requests
 
 app = Flask(__name__)
@@ -6,95 +6,100 @@ app = Flask(__name__)
 @app.route('/', methods=['GET'])
 def api_documentation():
     documentation = """
-    <h1>Welcome to the Lodestar Finance Members API</h1>
+    <h1>Lodestar Finance Members URI</h1>
     <h1>API Documentation</h1>
 
     <h2>Endpoint: /members</h2>
-    <p><strong>Description:</strong> This endpoint fetches member data from the Snapshot Hub GraphQL API.</p>
+    <p><strong>Description:</strong> This endpoint fetches unique voter data from the Snapshot Hub GraphQL API, paginated by the <code>created</code> field of votes.</p>
 
     <p><strong>HTTP Method:</strong> GET</p>
 
-    <p><strong>URL Structure:</strong> /members?first=[number]</p>
+    <p><strong>URL Structure:</strong> /members</p>
 
-    <p><strong>Query Parameters:</strong></p>
-    <ul>
-        <li><code>first</code> (optional): An integer specifying the number of members to fetch. If not provided, defaults to 200.</li>
-    </ul>
+    <p><strong>Query Parameters:</strong> None. This endpoint does not require any query parameters. It fetches all unique voters for the <code>lodestarfinance.eth</code> space, paginated based on the <code>created</code> parameter of the last vote in each fetched batch.</p>
 
-    <p><strong>Response Format:</strong> The response is in JSON format. It contains member data fetched from the Snapshot Hub GraphQL API. The data includes the IDs of the members and other related information.</p>
+    <p><strong>Response Format:</strong> The response is in JSON format. It contains a list of unique voters fetched from the Snapshot Hub GraphQL API, formatted according to the DAO URI specification.</p>
 
-    <p><strong>Example Request:</strong> GET /members?first=100</p>
-    <p>This request will fetch data for the first 100 members.</p>
+    <p><strong>Example Request:</strong> GET /members</p>
+    <p>This request will fetch data for all unique voters associated with the <code>lodestarfinance.eth</code> space, sorted in ascending order by their vote creation time.</p>
 
     <p><strong>Example Response:</strong></p>
     <pre>{
     "members": [
         {
-            "id": "0x123...",
+            "id": "0x09cC15Dda77789d42c0133c909E88Fb6E3Af793A",
             "type": "EthereumAddress"
         },
-        // ... more members ...
+        {
+            "id": "0xBdda09f18494226a27477b7cFc9Ed2a3F8076168",
+            "type": "EthereumAddress"
+        },
+        // ... more unique voters ...
     ],
     "@context": {
         "@vocab": "http://daostar.org/"
     },
     "type": "DAO",
-    "name": "YourDAOName"
+    "name": "lodestarfinance.eth"
 }</pre>
 
     <p><strong>Notes:</strong></p>
     <ul>
-        <li>This endpoint is used to interact with the Snapshot Hub GraphQL API.</li>
-        <li>The <code>first</code> query parameter allows for basic control over the number of members returned.</li>
-        <li>The response structure and content might vary based on the data available from the Snapshot Hub API.</li>
+        <li>This endpoint fetches data through paginated requests to the Snapshot Hub GraphQL API, ensuring that all unique voters are retrieved without missing any due to pagination limits.</li>
+        <li>The data is presented in a format that includes the voter's Ethereum address, the type of address, and contextual information according to the DAO URI specification.</li>
+        <li>As this process involves multiple requests to the Snapshot Hub API, response times may vary based on the total number of votes.</li>
     </ul>
     """
     return documentation
 
-@app.route('/members', methods=['GET'])
-def fetch_dao_data():
-    # API endpoint
+def fetch_votes_paginated(space, order_direction='asc', initial_created_gt=None):
     url = "https://hub.snapshot.org/graphql"
+    unique_voters = set()
+    created_gt = initial_created_gt
 
-    # Get 'first' parameter from query string, default to 500 if not provided
-    first_param = request.args.get('first', default=500, type=int)
-
-    # GraphQL query
-    query = """
-    query Votes($where: VoteWhere, $first: Int!) {
-      votes(where: $where, first: $first) {
-        id
-      }
-    }
-    """
-
-    # Variables for the query
-    variables = {
-        "where": {
-            "space": "lodestarfinance.eth"
-        },
-        "first": first_param  # Use the parameter from the query string
-    }
-
-    # Making the POST request
-    response = requests.post(url, json={'query': query, 'variables': variables})
-
-    if response.status_code == 200:
-        # Parsing the response
-        data = response.json()
-        members = data['data']['votes']
-
-        # Preparing the formatted JSON according to DAO URI
-        formatted_members = {
-            "members": [{"id": member["id"], "type": "EthereumAddress"} for member in members],
-            "@context": {"@vocab": "http://daostar.org/"},
-            "type": "DAO",
-            "name": "lodestarfinance.eth"
+    while True:
+        query = """
+        query Votes($where: VoteWhere, $orderDirection: OrderDirection) {
+          votes(where: $where, orderDirection: $orderDirection) {
+            created
+            voter
+          }
+        }
+        """
+        variables = {
+            "where": {"space": space, "created_gt": created_gt} if created_gt else {"space": space},
+            "orderDirection": order_direction
         }
 
-        return jsonify(formatted_members)
-    else:
-        return jsonify({"error": "Failed to fetch data"}), response.status_code
+        response = requests.post(url, json={'query': query, 'variables': variables})
+        if response.status_code == 200:
+            data = response.json()['data']['votes']
+            if not data:
+                break  
+
+            created_gt = data[-1]['created']  
+
+            for vote in data:
+                unique_voters.add(vote['voter'])
+        else:
+            raise Exception(f"Failed to fetch data, status code: {response.status_code}")
+
+    return unique_voters
+
+@app.route('/members', methods=['GET'])
+def get_unique_voters():
+    space = 'lodestarfinance.eth'  
+    unique_voters_set = fetch_votes_paginated(space=space, order_direction='asc')
+    unique_voters_list = [{"id": voter, "type": "EthereumAddress"} for voter in unique_voters_set]
+
+    formatted_members = {
+        "members": unique_voters_list,
+        "@context": {"@vocab": "http://daostar.org/"},
+        "type": "DAO",
+        "name": space,
+    }
+
+    return jsonify(formatted_members) 
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000, debug=True)
