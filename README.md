@@ -35,7 +35,9 @@ This request will fetch data for all unique voters associated with the lodestarf
     "type": "DAO",
     "name": "lodestarfinance.eth"
 }
-Notes:
+
+
+##### Notes:
 
 This endpoint fetches data through paginated requests to the Snapshot Hub GraphQL API, ensuring that all unique voters are retrieved without missing any due to pagination limits.
 The data is presented in a format that includes the voter's Ethereum address, the type of address, and contextual information according to the DAO URI specification.
