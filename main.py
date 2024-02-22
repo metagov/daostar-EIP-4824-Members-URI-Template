@@ -122,7 +122,7 @@ def get_unique_voters():
 
     formatted_members = {
         "members": unique_voters_list,
-        "@context": {"@vocab": "http://daostar.org/"},
+        "@context": "http://daostar.org/",
         "type": "DAO",
         "name": space,
     }
