@@ -36,9 +36,7 @@ def api_documentation():
         },
         // ... more unique voters ...
     ],
-    "@context": {
-        "@vocab": "http://daostar.org/"
-    },
+    "@context": "http://daostar.org/schemas",
     "type": "DAO",
     "name": "lodestarfinance.eth"
 }</pre>
