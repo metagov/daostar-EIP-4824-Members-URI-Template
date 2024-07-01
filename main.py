@@ -114,7 +114,7 @@ def fetch_votes_paginated(space, order_direction='asc', initial_created_gt=None)
 
 @app.route('/members', methods=['GET'])
 def get_unique_voters():
-    space = 'lodestarfinance.eth'  
+    space = 'beets.eth'  
     unique_voters_set = fetch_votes_paginated(space=space, order_direction='asc')
     unique_voters_list = [{"id": voter, "type": "EthereumAddress"} for voter in unique_voters_set]
 
