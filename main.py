@@ -1,131 +1,89 @@
 from flask import Flask, jsonify
 import requests
+import time
 
 app = Flask(__name__)
 
-@app.route('/', methods=['GET'])
-def api_documentation():
-    documentation = """
-    <h1>Lodestar Finance Members URI</h1>
-    <h1>API Documentation</h1>
-
-    <h2>Endpoint: /members</h2>
-    <p><strong>Description:</strong> This endpoint fetches unique voter data from the Snapshot Hub GraphQL API, paginated by the <code>created</code> field of votes.</p>
-
-    <p><strong>HTTP Method:</strong> GET</p>
-
-    <p><strong>URL Structure:</strong> /members</p>
-
-    <p><strong>Query Parameters:</strong> None. This endpoint does not require any query parameters. It fetches all unique voters for the <code>lodestarfinance.eth</code> space, paginated based on the <code>created</code> parameter of the last vote in each fetched batch.</p>
-
-    <p><strong>Response Format:</strong> The response is in JSON format. It contains a list of unique voters fetched from the Snapshot Hub GraphQL API, formatted according to the DAO URI specification.</p>
-
-    <p><strong>Example Request:</strong> GET /members</p>
-    <p>This request will fetch data for all unique voters associated with the <code>lodestarfinance.eth</code> space, sorted in ascending order by their vote creation time.</p>
-
-    <p><strong>Example Response:</strong></p>
-    <pre>{
-    "members": [
-        {
-            "id": "0x09cC15Dda77789d42c0133c909E88Fb6E3Af793A",
-            "type": "EthereumAddress"
-        },
-        {
-            "id": "0xBdda09f18494226a27477b7cFc9Ed2a3F8076168",
-            "type": "EthereumAddress"
-        },
-        // ... more unique voters ...
-    ],
-    "@context": "http://daostar.org/schemas",
-    "type": "DAO",
-    "name": "lodestarfinance.eth"
-}</pre>
-
-    <p><strong>Notes:</strong></p>
-    <ul>
-        <li>This endpoint fetches data through paginated requests to the Snapshot Hub GraphQL API, ensuring that all unique voters are retrieved without missing any due to pagination limits.</li>
-        <li>The data is presented in a format that includes the voter's Ethereum address, the type of address, and contextual information according to the DAO URI specification.</li>
-        <li>As this process involves multiple requests to the Snapshot Hub API, response times may vary based on the total number of votes.</li>
-    </ul>
-    """
-    return documentation
+def safe_request(url, json_payload, retries=5, initial_delay=3):
+    """Make API requests with handling for rate limits using exponential backoff."""
+    delay = initial_delay
+    for attempt in range(retries):
+        response = requests.post(url, json=json_payload)
+        if response.status_code == 200:
+            return response.json()  # Return JSON data directly
+        elif response.status_code == 429:
+            print(f"Rate limited. Retrying in {delay} seconds...")
+            time.sleep(delay)
+            delay *= 2  # Increase delay exponentially
+        else:
+            print(f"Request failed with status code {response.status_code}: {response.text}")
+            break  # Break the loop if failure is not due to rate limiting
+    else:  # This else corresponds to the for, not the if
+        raise Exception("Maximum retries exceeded with status code 429. Consider increasing retry count or delay.")
 
 def fetch_votes_paginated(space, order_direction='asc', initial_created_gt=None):
+    """Fetch paginated votes and unique voters from Snapshot Hub GraphQL API."""
     url = "https://hub.snapshot.org/graphql"
     unique_voters = set()
     created_gt = initial_created_gt
 
-    while True:
-        query = """
-        query ($spaceId: String!, $where: VoteWhere, $orderDirection: OrderDirection) {
-          votes(where: $where, orderDirection: $orderDirection) {
-            created
-            voter
-          }
-          space(id: $spaceId) {
-            admins
-            members
-            moderators
-            }
-        }
-        """
-        variables = {
-            "spaceId": space,
-            "where": {"space": space, "created_gt": created_gt} if created_gt else {"space": space},
-            "orderDirection": order_direction
-        }
-        
-        response = requests.post(url, json={'query': query, 'variables': variables})
-        if response.status_code == 200:
-            data = response.json()['data']
-            votes = data['votes']
+    query = """
+    query Votes($where: VoteWhere, $first: Int!) {
+      votes(where: $where, first: $first) {
+        created
+        voter
+      }
+    }
+    """
+    variables = {
+        "where": {"space": space, "created_gt": created_gt} if created_gt else {"space": space},
+        "first": 100  # Adjust the pagination limit as required
+    }
 
+    data = safe_request(url, {'query': query, 'variables': variables})
+    votes = data['data']['votes']
+
+    # Process all votes
+    while votes:
         for vote in votes:
             unique_voters.add(vote['voter'])
 
-        space_info = data['space']
-        for admin in space_info['admins']:
-            unique_voters.add(admin)
-        for member in space_info['members']:
-            unique_voters.add(member)
-        for moderator in space_info['moderators']:
-            unique_voters.add(moderator)
+        # Prepare for pagination
+        created_gt = votes[-1]['created']
+        variables['where']['created_gt'] = created_gt
+        data = safe_request(url, {'query': query, 'variables': variables})
+        votes = data['data']['votes']
 
-        # If there are votes, prepare for pagination
-        while votes:
-            created_gt = votes[-1]['created']
-            variables['where']['created_gt'] = created_gt
-            response = requests.post(url, json={'query': query, 'variables': variables})
-            if response.status_code == 200:
-                data = response.json()['data']['votes']
-                if not data:
-                    break  # Stop if no more votes are returned
+    return unique_voters
 
-                # Add voters to the unique set from the paginated results
-                for vote in data:
-                    unique_voters.add(vote['voter'])
-                votes = data
-            else:
-                raise Exception(f"Failed to fetch data, status code: {response.status_code}")
-            
-        return unique_voters
-
-
+@app.route('/', methods=['GET'])
+def api_documentation():
+    """API documentation endpoint."""
+    return """
+    <h1>API Documentation</h1>
+    <h2>Endpoint: /members</h2>
+    <p><strong>Description:</strong> Fetches unique voter data from the Snapshot Hub API.</p>
+    <p><strong>HTTP Method:</strong> GET</p>
+    <p><strong>URL Structure:</strong> /members</p>
+    <p><strong>Response Format:</strong> JSON</p>
+    <p><strong>Example Request:</strong> GET /members</p>
+    """
 
 @app.route('/members', methods=['GET'])
 def get_unique_voters():
-    space = 'beets.eth'  
-    unique_voters_set = fetch_votes_paginated(space=space, order_direction='asc')
+    """Endpoint to fetch unique voters."""
+    space = 'beets.eth'
+    unique_voters_set = fetch_votes_paginated(space)
     unique_voters_list = [{"id": voter, "type": "EthereumAddress"} for voter in unique_voters_set]
 
     formatted_members = {
         "members": unique_voters_list,
         "@context": "http://daostar.org/schemas",
         "type": "DAO",
-        "name": space,
+        "name": space
     }
 
-    return jsonify(formatted_members) 
+    return jsonify(formatted_members)
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000, debug=True)
