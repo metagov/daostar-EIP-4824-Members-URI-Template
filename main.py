@@ -15,10 +15,13 @@ CORS(app)
 # Initialize Redis client
 redis_url = os.getenv('REDIS_URL', 'localhost')
 
-if redis_url.startswith('redis://'):
+if redis_url.startswith('rediss://'):
+    print("redis prod connected")
     r = redis.Redis.from_url(redis_url, db=0, decode_responses=True)
 else:
-    r = redis.Redis(host=redis_url, port=6379, db=0, decode_responses=True)
+    print("redis local connected")
+    r = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+
 
 def safe_request(url, json_payload, retries=5, initial_delay=3):
     """Make API requests with handling for rate limits using exponential backoff."""
