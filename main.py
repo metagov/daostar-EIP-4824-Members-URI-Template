@@ -15,7 +15,7 @@ CORS(app)
 # Initialize Redis client
 redis_url = os.getenv('REDIS_URL', 'localhost')
 
-if redis_url.startswith('rediss://'):
+if redis_url.startswith('redis://'):
     print("redis prod connected")
     r = redis.Redis.from_url(redis_url, db=0, decode_responses=True)
 else:
