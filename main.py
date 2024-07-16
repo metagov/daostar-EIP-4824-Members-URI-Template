@@ -1,8 +1,24 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 import requests
 import time
+import random
+import redis
+import os
+import json
+from flask_cors import CORS
+
 
 app = Flask(__name__)
+CORS(app)
+
+
+# Initialize Redis client
+redis_url = os.getenv('REDIS_URL', 'localhost')
+
+if redis_url.startswith('redis://'):
+    r = redis.Redis.from_url(redis_url, db=0, decode_responses=True)
+else:
+    r = redis.Redis(host=redis_url, port=6379, db=0, decode_responses=True)
 
 def safe_request(url, json_payload, retries=5, initial_delay=3):
     """Make API requests with handling for rate limits using exponential backoff."""
@@ -10,74 +26,98 @@ def safe_request(url, json_payload, retries=5, initial_delay=3):
     for attempt in range(retries):
         response = requests.post(url, json=json_payload)
         if response.status_code == 200:
-            return response.json()  # Return JSON data directly
-        elif response.status_code == 429:
-            print(f"Rate limited. Retrying in {delay} seconds...")
-            time.sleep(delay)
-            delay *= 2  # Increase delay exponentially
+            return response.json()
+        elif response.status_code == 429 or response.status_code == 503:
+            sleep_time = delay + random.uniform(0, delay / 2)
+            print(f"Rate limited or service unavailable. Retrying in {sleep_time} seconds...")
+            time.sleep(sleep_time)
+            delay *= 2
         else:
             print(f"Request failed with status code {response.status_code}: {response.text}")
-            break  # Break the loop if failure is not due to rate limiting
-    else:  # This else corresponds to the for, not the if
-        raise Exception("Maximum retries exceeded with status code 429. Consider increasing retry count or delay.")
+            return None
+    raise Exception("Maximum retries exceeded with status code 429 or 503. Consider increasing retry count or delay.")
 
 def fetch_votes_paginated(space, order_direction='asc', initial_created_gt=None):
-    """Fetch paginated votes and unique voters from Snapshot Hub GraphQL API."""
+    """Fetch paginated votes and unique voters from Snapshot Hub GraphQL API, handling pagination only if a cursor is provided."""
+    cache_key = f"{space}-{order_direction}-{initial_created_gt}"
+    cached_data = r.get(cache_key)
+    if cached_data:
+        return json.loads(cached_data)
+
     url = "https://hub.snapshot.org/graphql"
     unique_voters = set()
-    created_gt = initial_created_gt
+    last_cursor = initial_created_gt  # Start from provided cursor, if any
 
     query = """
-    query Votes($where: VoteWhere, $first: Int!) {
-      votes(where: $where, first: $first) {
+    query ($spaceId: String!, $where: VoteWhere!, $orderDirection: OrderDirection!) {
+      votes(where: $where, orderDirection: $orderDirection) {
         created
         voter
+      }
+      space(id: $spaceId) {
+        admins
+        members
+        moderators
       }
     }
     """
     variables = {
-        "where": {"space": space, "created_gt": created_gt} if created_gt else {"space": space},
-        "first": 100  # Adjust the pagination limit as required
+        "spaceId": space,
+        "where": {"space": space, "created_gt": last_cursor},
+        "orderDirection": order_direction,
     }
 
-    data = safe_request(url, {'query': query, 'variables': variables})
-    votes = data['data']['votes']
+    if last_cursor:
+        variables['where']['created_gt'] = last_cursor  # Pagination based on cursor
 
-    # Process all votes
-    while votes:
+    data = safe_request(url, {'query': query, 'variables': variables})
+    if data and 'data' in data and 'votes' in data['data']:
+        votes = data['data']['votes']
+        admins = data['data']['space']['admins']
+        members = data['data']['space']['members']
+        moderators = data['data']['space']['moderators']
+
+
         for vote in votes:
             unique_voters.add(vote['voter'])
+        
+        if not initial_created_gt == 0:   
+            for admin in admins:
+                unique_voters.add(admin)
+            
+            for member in members:
+                unique_voters.add(member)
+            
+            for moderator in moderators:
+                unique_voters.add(moderator)
 
-        # Prepare for pagination
-        created_gt = votes[-1]['created']
-        variables['where']['created_gt'] = created_gt
-        data = safe_request(url, {'query': query, 'variables': variables})
-        votes = data['data']['votes']
+        if votes:
+            last_cursor = votes[-1]['created']
+            print("Cursor set: " + str(last_cursor))
+           
 
-    return unique_voters
+        print("Setting Cache for 10 Hours")
+        r.set(cache_key, json.dumps((list(unique_voters), last_cursor)), ex=36000)  # Cache for 10 hours
 
-@app.route('/', methods=['GET'])
-def api_documentation():
-    """API documentation endpoint."""
-    return """
-    <h1>API Documentation</h1>
-    <h2>Endpoint: /members</h2>
-    <p><strong>Description:</strong> Fetches unique voter data from the Snapshot Hub API.</p>
-    <p><strong>HTTP Method:</strong> GET</p>
-    <p><strong>URL Structure:</strong> /members</p>
-    <p><strong>Response Format:</strong> JSON</p>
-    <p><strong>Example Request:</strong> GET /members</p>
-    """
+    return unique_voters, last_cursor
 
 @app.route('/members', methods=['GET'])
 def get_unique_voters():
     """Endpoint to fetch unique voters."""
+    print("Fetching Members Data...")
     space = 'beets.eth'
-    unique_voters_set = fetch_votes_paginated(space)
+    cursor_str = request.args.get('cursor')
+    try:
+        cursor = int(cursor_str) if cursor_str is not None else None
+    except ValueError:
+        return jsonify({"error": "Invalid cursor format. Cursor must be an integer."}), 400
+
+    unique_voters_set, last_cursor = fetch_votes_paginated(space, initial_created_gt=cursor)
     unique_voters_list = [{"id": voter, "type": "EthereumAddress"} for voter in unique_voters_set]
 
     formatted_members = {
         "members": unique_voters_list,
+        "next_cursor": last_cursor,
         "@context": "http://daostar.org/schemas",
         "type": "DAO",
         "name": space
