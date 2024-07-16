@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EIP-4824 Members URI API Documentation</title>
+</head>
+<body>
+    <h1>API Documentation</h1>
+    <p>This page provides detailed documentation for the API endpoints available in the application, focusing on retrieving unique voters for a specific DAO space.</p>
+    <h2>Endpoints</h2>
+    <ul>
+        <li>
+            <b>GET /members/&lt;space&gt;</b> - Fetches unique voters for a specified DAO space.
+            <p>Parameters:</p>
+            <ul>
+                <li><code>space</code>: String - The DAO space identifier (e.g., "beets.eth") as part of the URL path.</li>
+                <li><code>cursor</code>: Integer (optional) - Used to paginate results based on this cursor. If provided, the API fetches results created after the timestamp denoted by this cursor.</li>
+            </ul>
+            <p>Description:</p>
+            <p>This endpoint retrieves a list of unique voters from the specified DAO space, allowing for pagination if a cursor is provided. It is effective for accessing data in manageable segments when dealing with large datasets.</p>
+            <h3>Example Usage</h3>
+            <p><b>Request without cursor:</b></p>
+            <pre>GET /members/beets.eth</pre>
+            <p><b>Response:</b></p>
+            <pre>{
+  "members": [
+    { "id": "0x123...", "type": "EthereumAddress" }
+  ],
+  "next_cursor": null,
+  "@context": "http://daostar.org/schemas",
+  "type": "DAO",
+  "name": "beets.eth"
+}</pre>
+            <p><b>Request with cursor:</b></p>
+            <pre>GET /members/beets.eth?cursor=1609459200</pre>
+            <p><b>Response:</b></p>
+            <pre>{
+  "members": [
+    { "id": "0x456...", "type": "EthereumAddress" }
+  ],
+  "next_cursor": 1609462800,
+  "@context": "http://daostar.org/schemas",
+  "type": "DAO",
+  "name": "beets.eth"
+}</pre>
+        </li>
+    </ul>
+</body>
+</html>
