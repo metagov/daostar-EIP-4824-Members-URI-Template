@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, render_template
 import requests
 import time
 import random
@@ -21,6 +21,11 @@ if redis_url.startswith('redis://'):
 else:
     print("redis local connected")
     r = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+    
+@app.route('/')
+def docs():
+    return render_template('docs.html')
+
 
 
 def safe_request(url, json_payload, retries=5, initial_delay=3):
@@ -104,11 +109,10 @@ def fetch_votes_paginated(space, order_direction='asc', initial_created_gt=None)
 
     return unique_voters, last_cursor
 
-@app.route('/members', methods=['GET'])
-def get_unique_voters():
+@app.route('/members/<space>', methods=['GET'])
+def get_unique_voters(space):
     """Endpoint to fetch unique voters."""
     print("Fetching Members Data...")
-    space = 'beets.eth'
     cursor_str = request.args.get('cursor')
     try:
         cursor = int(cursor_str) if cursor_str is not None else None
