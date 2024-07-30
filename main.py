@@ -47,7 +47,7 @@ def safe_request(url, json_payload, retries=5, initial_delay=3):
 
 def fetch_votes_paginated(space, order_direction='asc', initial_created_gt=None):
     """Fetch paginated votes and unique voters from Snapshot Hub GraphQL API, handling pagination only if a cursor is provided."""
-    cache_key = f"{space}-{order_direction}-{initial_created_gt}"
+    cache_key = f"members-{space}-{order_direction}-{initial_created_gt}"
     cached_data = r.get(cache_key)
     if cached_data:
         return json.loads(cached_data)
