@@ -7,10 +7,8 @@ import os
 import json
 from flask_cors import CORS
 
-
 app = Flask(__name__)
 CORS(app)
-
 
 # Initialize Redis client
 redis_url = os.getenv('REDIS_URL', 'localhost')
@@ -25,8 +23,6 @@ else:
 @app.route('/')
 def docs():
     return render_template('docs.html')
-
-
 
 def safe_request(url, json_payload, retries=5, initial_delay=3):
     """Make API requests with handling for rate limits using exponential backoff."""
@@ -85,7 +81,6 @@ def fetch_votes_paginated(space, order_direction='asc', initial_created_gt=None)
         members = data['data']['space']['members']
         moderators = data['data']['space']['moderators']
 
-
         for vote in votes:
             unique_voters.add(vote['voter'])
         
@@ -109,11 +104,59 @@ def fetch_votes_paginated(space, order_direction='asc', initial_created_gt=None)
 
     return unique_voters, last_cursor
 
+def fetch_onchain_members(onchain_slug):
+    """Fetch onchain members from Tally API."""
+    api_url = "https://api.tally.xyz/query"
+    api_key = str(os.getenv('TALLY_API_KEY'))
+
+    if not api_key:
+        raise Exception("TALLY_API_KEY environment variable not set")
+
+    query_org_id = """
+    query {
+      organizationSlugToId(slug: "%s")
+    }
+    """ % onchain_slug
+    headers = {
+        "Api-key": f"{api_key}",
+        "Content-Type": "application/json"
+    }
+    response_org_id = requests.post(api_url, json={"query": query_org_id}, headers=headers)
+    if response_org_id.status_code != 200:
+        raise Exception(f"Failed to fetch organization ID: {response_org_id.text}")
+    
+    organization_id = response_org_id.json()['data']['organizationSlugToId']
+
+    query_org_members = """
+    query {
+      organizationMembers(input: {filters: {organizationId: "%s"}}) {
+        nodes {
+        ... on Member {
+          role
+          account {
+            address
+            type
+          }
+        }
+        }
+      }
+    }
+    """ % organization_id
+
+    response_org_members = requests.post(api_url, json={"query": query_org_members}, headers=headers)
+    if response_org_members.status_code != 200:
+        raise Exception(f"Failed to fetch organization members: {response_org_members.text}")
+
+    onchain_members = response_org_members.json()['data']['organizationMembers']['nodes']
+    return onchain_members
+
 @app.route('/members/<space>', methods=['GET'])
 def get_unique_voters(space):
     """Endpoint to fetch unique voters."""
     print("Fetching Members Data...")
     cursor_str = request.args.get('cursor')
+    onchain_slug = request.args.get('onchain')
+
     try:
         cursor = int(cursor_str) if cursor_str is not None else None
     except ValueError:
@@ -123,12 +166,24 @@ def get_unique_voters(space):
     unique_voters_list = [{"id": voter, "type": "EthereumAddress"} for voter in unique_voters_set]
 
     formatted_members = {
-        "members": unique_voters_list,
-        "next_cursor": last_cursor,
+        "offchain": {
+            "members": unique_voters_list,
+            "next_cursor": last_cursor,
+        },
         "@context": "http://daostar.org/schemas",
         "type": "DAO",
         "name": space
     }
+
+    if onchain_slug:
+        onchain_members = fetch_onchain_members(onchain_slug)
+        formatted_onchain_members = [
+            {"id": f"{member['account']['address']}", "role": member['role']} 
+            for member in onchain_members
+        ]
+        formatted_members["onchain"] = {
+            "members": formatted_onchain_members
+        }
 
     return jsonify(formatted_members)
 
