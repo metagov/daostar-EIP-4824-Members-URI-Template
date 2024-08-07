@@ -6,6 +6,8 @@ import redis
 import os
 import json
 from flask_cors import CORS
+import asyncio
+import aiohttp
 
 app = Flask(__name__)
 CORS(app)
@@ -24,29 +26,31 @@ else:
 def docs():
     return render_template('docs.html')
 
-def safe_request(url, json_payload, retries=5, initial_delay=3):
+async def safe_request(url, json_payload, retries=5, initial_delay=3):
     """Make API requests with handling for rate limits using exponential backoff."""
     delay = initial_delay
-    for attempt in range(retries):
-        response = requests.post(url, json=json_payload)
-        if response.status_code == 200:
-            return response.json()
-        elif response.status_code == 429 or response.status_code == 503:
-            sleep_time = delay + random.uniform(0, delay / 2)
-            print(f"Rate limited or service unavailable. Retrying in {sleep_time} seconds...")
-            time.sleep(sleep_time)
-            delay *= 2
-        else:
-            print(f"Request failed with status code {response.status_code}: {response.text}")
-            return None
+    async with aiohttp.ClientSession() as session:
+        for attempt in range(retries):
+            async with session.post(url, json=json_payload) as response:
+                if response.status == 200:
+                    return await response.json()
+                elif response.status in (429, 503):
+                    sleep_time = delay + random.uniform(0, delay / 2)
+                    print(f"Rate limited or service unavailable. Retrying in {sleep_time} seconds...")
+                    await asyncio.sleep(sleep_time)
+                    delay *= 2
+                else:
+                    print(f"Request failed with status code {response.status}: {await response.text()}")
+                    return None
     raise Exception("Maximum retries exceeded with status code 429 or 503. Consider increasing retry count or delay.")
 
-def fetch_votes_paginated(space, order_direction='asc', initial_created_gt=None):
+async def fetch_votes_paginated(space, order_direction='asc', initial_created_gt=None, refresh=False):
     """Fetch paginated votes and unique voters from Snapshot Hub GraphQL API, handling pagination only if a cursor is provided."""
     cache_key = f"members-{space}-{order_direction}-{initial_created_gt}"
-    cached_data = r.get(cache_key)
-    if cached_data:
-        return json.loads(cached_data)
+    if not refresh:
+        cached_data = r.get(cache_key)
+        if cached_data:
+            return json.loads(cached_data)
 
     url = "https://hub.snapshot.org/graphql"
     unique_voters = set()
@@ -74,7 +78,7 @@ def fetch_votes_paginated(space, order_direction='asc', initial_created_gt=None)
     if last_cursor:
         variables['where']['created_gt'] = last_cursor  # Pagination based on cursor
 
-    data = safe_request(url, {'query': query, 'variables': variables})
+    data = await safe_request(url, {'query': query, 'variables': variables})
     if data and 'data' in data and 'votes' in data['data']:
         votes = data['data']['votes']
         admins = data['data']['space']['admins']
@@ -97,15 +101,20 @@ def fetch_votes_paginated(space, order_direction='asc', initial_created_gt=None)
         if votes:
             last_cursor = votes[-1]['created']
             print("Cursor set: " + str(last_cursor))
-           
 
         print("Setting Cache for 10 Hours")
-        r.set(cache_key, json.dumps((list(unique_voters), last_cursor)), ex=36000)  # Cache for 10 hours
+        r.set(cache_key, json.dumps((list(unique_voters), last_cursor)))  # Cache for 10 hours
 
     return unique_voters, last_cursor
 
-def fetch_onchain_members(onchain_slug):
-    """Fetch onchain members from Tally API."""
+async def fetch_onchain_members(onchain_slug, cursor=None, refresh=False):
+    """Fetch onchain members and delegates from Tally API, with pagination."""
+    cache_key = f"onchain-members-{onchain_slug}-{cursor}"
+    if not refresh:
+        cached_data = r.get(cache_key)
+        if cached_data:
+            return json.loads(cached_data)
+
     api_url = "https://api.tally.xyz/query"
     api_key = str(os.getenv('TALLY_API_KEY'))
 
@@ -121,71 +130,126 @@ def fetch_onchain_members(onchain_slug):
         "Api-key": f"{api_key}",
         "Content-Type": "application/json"
     }
-    response_org_id = requests.post(api_url, json={"query": query_org_id}, headers=headers)
-    if response_org_id.status_code != 200:
-        raise Exception(f"Failed to fetch organization ID: {response_org_id.text}")
-    
-    organization_id = response_org_id.json()['data']['organizationSlugToId']
+    async with aiohttp.ClientSession() as session:
+        async with session.post(api_url, json={"query": query_org_id}, headers=headers) as response_org_id:
+            if response_org_id.status != 200:
+                raise Exception(f"Failed to fetch organization ID: {await response_org_id.text()}")
+            organization_id = (await response_org_id.json())['data']['organizationSlugToId']
 
-    query_org_members = """
-    query {
-      organizationMembers(input: {filters: {organizationId: "%s"}}) {
-        nodes {
-        ... on Member {
-          role
-          account {
-            address
-            type
+        query_org_members = """
+        query Delegates($input: DelegatesInput!, $organizationMembersInput2: OrganizationMembersInput!) {
+          delegates(input: $input) {
+            pageInfo {
+              lastCursor
+            }
+            nodes {
+              ... on Delegate {
+                account {
+                  address
+                }
+                organization {
+                  chainIds
+                }
+              }
+            }
+          }
+          organizationMembers(input: $organizationMembersInput2) {
+            nodes {
+              ... on Member {
+                account {
+                  address
+                }
+                organization {
+                  chainIds
+                }
+                role
+              }
+            }
           }
         }
+        """
+
+        variables = {
+            "input": {
+                "filters": {
+                    "organizationId": organization_id
+                }
+            },
+            "organizationMembersInput2": {
+                "filters": {
+                    "organizationId": organization_id
+                }
+            }
         }
-      }
-    }
-    """ % organization_id
 
-    response_org_members = requests.post(api_url, json={"query": query_org_members}, headers=headers)
-    if response_org_members.status_code != 200:
-        raise Exception(f"Failed to fetch organization members: {response_org_members.text}")
+        if cursor is not None:
+            variables["input"]["page"] = {"afterCursor": cursor}
 
-    onchain_members = response_org_members.json()['data']['organizationMembers']['nodes']
-    return onchain_members
+        async with session.post(api_url, json={"query": query_org_members, "variables": variables}, headers=headers) as response_org_members:
+            if response_org_members.status != 200:
+                raise Exception(f"Failed to fetch organization members: {await response_org_members.text()}")
+
+            data = await response_org_members.json()
+            onchain_members = data['data']['organizationMembers']['nodes']
+            delegates = data['data']['delegates']['nodes']
+            last_cursor = data['data']['delegates']['pageInfo']['lastCursor']
+
+            print("Setting Cache for 10 Hours")
+            r.set(cache_key, json.dumps((onchain_members, delegates, last_cursor)))  # Cache for 10 hours
+
+    return onchain_members, delegates, last_cursor
 
 @app.route('/members/<space>', methods=['GET'])
-def get_unique_voters(space):
+async def get_unique_voters(space):
     """Endpoint to fetch unique voters."""
     print("Fetching Members Data...")
-    cursor_str = request.args.get('cursor')
+    offchain_cursor_str = request.args.get('offchain_cursor')
+    onchain_cursor_str = request.args.get('onchain_cursor')
     onchain_slug = request.args.get('onchain')
+    refresh = request.args.get('refresh') == 'true'
 
     try:
-        cursor = int(cursor_str) if cursor_str is not None else None
+        offchain_cursor = int(offchain_cursor_str) if offchain_cursor_str is not None else None
     except ValueError:
-        return jsonify({"error": "Invalid cursor format. Cursor must be an integer."}), 400
+        return jsonify({"error": "Invalid offchain cursor format. Cursor must be an integer."}), 400
 
-    unique_voters_set, last_cursor = fetch_votes_paginated(space, initial_created_gt=cursor)
+    try:
+        onchain_cursor = int(onchain_cursor_str) if onchain_cursor_str is not None else None
+    except ValueError:
+        return jsonify({"error": "Invalid onchain cursor format. Cursor must be an integer."}), 400
+
+    unique_voters_set, offchain_last_cursor = await fetch_votes_paginated(space, initial_created_gt=offchain_cursor, refresh=refresh)
     unique_voters_list = [{"id": voter, "type": "EthereumAddress"} for voter in unique_voters_set]
 
     formatted_members = {
-        "offchain": {
-            "members": unique_voters_list,
-            "next_cursor": last_cursor,
-        },
         "@context": "http://daostar.org/schemas",
         "type": "DAO",
-        "name": space
+        "name": space,
+        "members" : {
+        "offchain": {
+            "members": unique_voters_list,
+            "offchain_cursor_str": offchain_last_cursor,
+        }, },
+        
     }
 
     if onchain_slug:
-        onchain_members = fetch_onchain_members(onchain_slug)
+        onchain_members, delegates, onchain_last_cursor = await fetch_onchain_members(onchain_slug, cursor=onchain_cursor, refresh=refresh)
         formatted_onchain_members = [
-            {"id": f"{member['account']['address']}", "role": member['role']} 
+            {"id": f"{member['account']['address']}", "role": member['role'], "type": "EthereumAddress"} 
             for member in onchain_members
         ]
+        formatted_delegates = [
+            {"id": f"{delegate['account']['address']}", "role": "delegate",  "type": "EthereumAddress"} 
+            for delegate in delegates
+        ]
+
         formatted_members["onchain"] = {
-            "members": formatted_onchain_members
+            "members": formatted_onchain_members + formatted_delegates,
+            "onchain_cursor_str": onchain_last_cursor
         }
 
-    return jsonify(formatted_members)
+    return jsonify({"Members": formatted_members})
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000, debug=True)

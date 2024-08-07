@@ -14,35 +14,62 @@
             <b>GET /members/&lt;space&gt;</b> - Fetches unique voters for a specified DAO space.
             <p>Parameters:</p>
             <ul>
-                <li><code>space</code>: String - The DAO space identifier (e.g., "beets.eth") as part of the URL path.</li>
-                <li><code>cursor</code>: Integer (optional) - Used to paginate results based on this cursor. If provided, the API fetches results created after the timestamp denoted by this cursor.</li>
+                <li><code>space</code>: String - The DAO space identifier (e.g., "arbitrumfoundation.eth") as part of the URL path.</li>
+                <li><code>offchain_cursor</code>: Integer (optional) - Used to paginate off-chain results based on this cursor. If provided, the API fetches off-chain results created after the timestamp denoted by this cursor.</li>
+                <li><code>onchain_cursor</code>: Integer (optional) - Used to paginate on-chain results based on this cursor. If provided, the API fetches on-chain results created after the timestamp denoted by this cursor.</li>
+                <li><code>onchain</code>: String (optional) - The on-chain slug identifier for the DAO.</li>
+                <li><code>refresh</code>: Boolean (optional) - If true, refreshes the cache. Default is false.</li>
             </ul>
             <p>Description:</p>
-            <p>This endpoint retrieves a list of unique voters from the specified DAO space, allowing for pagination if a cursor is provided. It is effective for accessing data in manageable segments when dealing with large datasets.</p>
+            <p>This endpoint retrieves a list of unique voters from the specified DAO space, allowing for pagination if cursors are provided. It is effective for accessing data in manageable segments when dealing with large datasets. The response includes both off-chain and on-chain members.</p>
             <h3>Example Usage</h3>
-            <p><b>Request without cursor:</b></p>
-            <pre>GET /members/beets.eth</pre>
+            <p><b>Request without cursors:</b></p>
+            <pre>GET /members/arbitrumfoundation.eth?onchain=arbitrum</pre>
             <p><b>Response:</b></p>
             <pre>{
-  "members": [
-    { "id": "0x123...", "type": "EthereumAddress" }
-  ],
-  "next_cursor": null,
-  "@context": "http://daostar.org/schemas",
-  "type": "DAO",
-  "name": "beets.eth"
+  "Members": {
+    "members": {
+      "offchain": {
+        "members": [
+          { "id": "0x123...", "type": "EthereumAddress" }
+        ],
+        "next_cursor": null
+      },
+      "onchain": {
+        "members": [
+          { "id": "0x456...", "role": "delegate", "type": "EthereumAddress" }
+        ],
+        "next_cursor": null
+      }
+    },
+    "@context": "http://daostar.org/schemas",
+    "type": "DAO",
+    "name": "arbitrumfoundation.eth"
+  }
 }</pre>
-            <p><b>Request with cursor:</b></p>
-            <pre>GET /members/beets.eth?cursor=1609459200</pre>
+            <p><b>Request with cursors:</b></p>
+            <pre>GET /members/arbitrumfoundation.eth?onchain=arbitrum&offchain_cursor=1609459200&onchain_cursor=1609462800</pre>
             <p><b>Response:</b></p>
             <pre>{
-  "members": [
-    { "id": "0x456...", "type": "EthereumAddress" }
-  ],
-  "next_cursor": 1609462800,
-  "@context": "http://daostar.org/schemas",
-  "type": "DAO",
-  "name": "beets.eth"
+  "Members": {
+    "members": {
+      "offchain": {
+        "members": [
+          { "id": "0x789...", "type": "EthereumAddress" }
+        ],
+        "next_cursor": 1609466400
+      },
+      "onchain": {
+        "members": [
+          { "id": "0xabc...", "role": "member", "type": "EthereumAddress" }
+        ],
+        "next_cursor": 1609470000
+      }
+    },
+    "@context": "http://daostar.org/schemas",
+    "type": "DAO",
+    "name": "arbitrumfoundation.eth"
+  }
 }</pre>
         </li>
     </ul>
