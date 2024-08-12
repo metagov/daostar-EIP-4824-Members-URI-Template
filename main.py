@@ -102,8 +102,8 @@ async def fetch_votes_paginated(space, order_direction='asc', initial_created_gt
             last_cursor = votes[-1]['created']
             print("Cursor set: " + str(last_cursor))
 
-        print("Setting Cache for 10 Hours")
-        r.set(cache_key, json.dumps((list(unique_voters), last_cursor)))  # Cache for 10 hours
+        print("Setting Cache for offchain members")
+        r.set(cache_key, json.dumps((list(unique_voters), last_cursor)))  
 
     return unique_voters, last_cursor
 
@@ -136,68 +136,103 @@ async def fetch_onchain_members(onchain_slug, cursor=None, refresh=False):
                 raise Exception(f"Failed to fetch organization ID: {await response_org_id.text()}")
             organization_id = (await response_org_id.json())['data']['organizationSlugToId']
 
-        query_org_members = """
-        query Delegates($input: DelegatesInput!, $organizationMembersInput2: OrganizationMembersInput!) {
-          delegates(input: $input) {
-            pageInfo {
-              lastCursor
-            }
-            nodes {
-              ... on Delegate {
-                account {
-                  address
+            if cursor:
+                # Query only delegates when cursor is present
+                query_org_members = """
+                query Delegates($input: DelegatesInput!) {
+                    delegates(input: $input) {
+                        pageInfo {
+                            lastCursor
+                        }
+                        nodes {
+                            ... on Delegate {
+                                account {
+                                    address
+                                }
+                                organization {
+                                    chainIds
+                                }
+                            }
+                        }
+                    }
                 }
-                organization {
-                  chainIds
+                """
+                variables = {
+                    "input": {
+                        "filters": {
+                            "organizationId": organization_id
+                        },
+                        "page": {
+                            "afterCursor": cursor
+                        }
+                    }
                 }
-              }
-            }
-          }
-          organizationMembers(input: $organizationMembersInput2) {
-            nodes {
-              ... on Member {
-                account {
-                  address
+            else:
+                # Query both delegates and organization members when cursor is absent
+                query_org_members = """
+                query Delegates($input: DelegatesInput!, $organizationMembersInput2: OrganizationMembersInput!) {
+                    delegates(input: $input) {
+                        pageInfo {
+                            lastCursor
+                        }
+                        nodes {
+                            ... on Delegate {
+                                account {
+                                    address
+                                }
+                                organization {
+                                    chainIds
+                                }
+                            }
+                        }
+                    }
+                    organizationMembers(input: $organizationMembersInput2) {
+                        nodes {
+                            ... on Member {
+                                account {
+                                    address
+                                }
+                                organization {
+                                    chainIds
+                                }
+                                role
+                            }
+                        }
+                    }
                 }
-                organization {
-                  chainIds
+                """
+                variables = {
+                    "input": {
+                        "filters": {
+                            "organizationId": organization_id
+                        }
+                    },
+                    "organizationMembersInput2": {
+                        "filters": {
+                            "organizationId": organization_id
+                        }
+                    }
                 }
-                role
-              }
-            }
-          }
-        }
-        """
-
-        variables = {
-            "input": {
-                "filters": {
-                    "organizationId": organization_id
-                }
-            },
-            "organizationMembersInput2": {
-                "filters": {
-                    "organizationId": organization_id
-                }
-            }
-        }
-
-        if cursor is not None:
-            variables["input"]["page"] = {"afterCursor": cursor}
 
         async with session.post(api_url, json={"query": query_org_members, "variables": variables}, headers=headers) as response_org_members:
             if response_org_members.status != 200:
                 raise Exception(f"Failed to fetch organization members: {await response_org_members.text()}")
 
             data = await response_org_members.json()
-            onchain_members = data['data']['organizationMembers']['nodes']
             delegates = data['data']['delegates']['nodes']
             last_cursor = data['data']['delegates']['pageInfo']['lastCursor']
 
-            print("Setting Cache for 10 Hours")
-            r.set(cache_key, json.dumps((onchain_members, delegates, last_cursor)))  # Cache for 10 hours
+            # Only include organization members if they were queried
+            onchain_members = []
+            if not cursor and 'organizationMembers' in data['data']:
+                onchain_members = data['data']['organizationMembers']['nodes']
+
+            print("Setting Cache for onchain members")
+            r.set(cache_key, json.dumps((onchain_members, delegates, last_cursor)))  
 
     return onchain_members, delegates, last_cursor
+
+
 
 @app.route('/members/<space>', methods=['GET'])
 async def get_unique_voters(space):
