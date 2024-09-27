@@ -1,7 +1,7 @@
-# Lodestar Finance Members URI
+# EIP-4824 Members URI
 ## API Documentation
 ### Endpoint: /members
-**Description:** This endpoint fetches unique voter data from the Snapshot Hub GraphQL API, paginated by the created field of votes.
+**Description:** This endpoint fetches unique voter data from the Snapshot Hub GraphQL API and Tally API, paginated by the created field of votes.
 
 **HTTP Method:** GET
 
