@@ -1,51 +1,70 @@
-# EIP-4824 Members URI
-## API Documentation
-### Endpoint: /members
-**Description:** This endpoint fetches unique voter data from the Snapshot Hub GraphQL API and Tally API, paginated by the created field of votes.
+# EIP-4824 Members URI API Documentation
 
-**HTTP Method:** GET
+---
 
-**URL Structure:** /members
+## 1. Root Endpoint
 
-**Query Parameters:** None. This endpoint does not require any query parameters. It fetches all unique voters for the lodestarfinance.eth space, paginated based on the created parameter of the last vote in each fetched batch.
+**Endpoint:** `/`  
+**Method:** `GET`  
+**Description:** Renders the documentation page.
 
-**Response Format:** The response is in JSON format. It contains a list of unique voters fetched from the Snapshot Hub GraphQL API, formatted according to the DAO URI specification.
+---
 
-**Example Request:** GET /members
+## 2. Get Unique Voters
 
-This request will fetch data for all unique voters associated with the lodestarfinance.eth space, sorted in ascending order by their vote creation time.
+**Endpoint:** `/members/<space>`  
+**Method:** `GET`  
+**Description:** Fetches unique voters for a given space. Optionally fetches on-chain members and delegates if `onchain` parameter is provided.
 
-**Example Response:**
+### Parameters:
 
-{
-    "members": [
-        {
-            "id": "0x09cC15Dda77789d42c0133c909E88Fb6E3Af793A",
-            "type": "EthereumAddress"
+- **`space` (path parameter):**
+  - **Type:** `string`
+  - **Description:** The space ID from which to fetch the unique voters.
+
+- **`offchain_cursor` (query parameter, optional):**
+  - **Type:** `integer`
+  - **Description:** Cursor for paginating off-chain votes.
+
+- **`onchain_cursor` (query parameter, optional):**
+  - **Type:** `integer`
+  - **Description:** Cursor for paginating on-chain members and delegates.
+
+- **`onchain` (query parameter, optional):**
+  - **Type:** `string`
+  - **Description:** The slug of the on-chain organization to fetch members and delegates from.
+
+- **`refresh` (query parameter, optional):**
+  - **Type:** `boolean`
+  - **Description:** If set to `true`, forces a refresh of the cached data.
+
+### Response:
+
+- **200 OK**
+  - **Content-Type:** `application/json`
+  - **Description:** Returns the list of unique voters, and optionally on-chain members and delegates, with pagination cursors.
+
+  ```json
+  {
+    "Members": {
+      "@context": "http://daostar.org/schemas",
+      "type": "DAO",
+      "name": "Example DAO",
+      "members": {
+        "offchain": {
+          "members": [
+            {"id": "0x123...", "type": "EthereumAddress"},
+            {"id": "0x456...", "type": "EthereumAddress"}
+          ],
+          "offchain_cursor_str": 123456789
         },
-        {
-            "id": "0xBdda09f18494226a27477b7cFc9Ed2a3F8076168",
-            "type": "EthereumAddress"
-        },
-        // ... more unique voters ...
-    ],
-    "@context": {
-        "@vocab": "http://daostar.org/"
-    },
-    "type": "DAO",
-    "name": "lodestarfinance.eth"
-}
-
-
-##### Notes:
-
-This endpoint fetches data through paginated requests to the Snapshot Hub GraphQL API, ensuring that all unique voters are retrieved without missing any due to pagination limits.
-The data is presented in a format that includes the voter's Ethereum address, the type of address, and contextual information according to the DAO URI specification.
-As this process involves multiple requests to the Snapshot Hub API, response times may vary based on the total number of votes.
-
-
-## Build Instructions
-
-###### pip install -r requirements.txt
-
-###### python3 main.py
+        "onchain": {
+          "members": [
+            {"id": "0xabc...", "role": "member", "type": "EthereumAddress"},
+            {"id": "0xdef...", "role": "delegate", "type": "EthereumAddress"}
+          ],
+          "onchain_cursor_str": 987654321
+        }
+      }
+    }
+  }
