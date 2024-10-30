@@ -1,6 +1,13 @@
 # EIP-4824 Members URI API Documentation
 
+## Build Instructions
+
+`pip install -r requirements.txt`
+
+`python3 main.py` 
+
 ---
+## Endpoints
 
 ## 1. Root Endpoint
 
