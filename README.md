@@ -7,6 +7,10 @@
 `python3 main.py` 
 
 ---
+### Data Sources:
+- Tally API
+- Snapshot API
+
 ## Endpoints
 
 ## 1. Root Endpoint
