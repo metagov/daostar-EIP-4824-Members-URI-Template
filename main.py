@@ -238,6 +238,7 @@ async def is_member(space):
     """Endpoint to check if an address is a member."""
     voter = request.args.get('voter')
     onchain_slug = request.args.get('onchain')
+    refresh = request.args.get('refresh') == 'true'
 
     if not voter:
         return jsonify({"error": "Voter address is required"}), 400
@@ -245,9 +246,11 @@ async def is_member(space):
     if not space:
         return jsonify({"error": "Space identifier is required"}), 400
 
+    # Default values
     is_offchain_member = False
-    is_onchain_member = False
+    is_onchain_member = "Onchain Check Failed Without onchain Slug."  # Explicit message for missing onchain_slug
 
+    # Check membership on Snapshot (off-chain)
     try:
         url = "https://hub.snapshot.org/graphql"
         query = """
@@ -266,10 +269,12 @@ async def is_member(space):
         is_offchain_member = bool(snapshot_result['data']['votes'])
     except Exception as e:
         print(f"Error checking offchain membership: {e}")
-        return jsonify({"error": "Failed to check offchain membership, provide valid inputs.", "details": str(e)}), 500
+        return jsonify({"error": "Failed to check offchain membership", "details": str(e)}), 500
 
+    # Check membership on Tally (on-chain)
     if onchain_slug:
         try:
+            # Convert onchain_slug to organizationId
             api_url = "https://api.tally.xyz/query"
             api_key = os.getenv('TALLY_API_KEY')
 
@@ -334,13 +339,16 @@ async def is_member(space):
                     is_onchain_member = bool(delegate_data['data']['delegates']['nodes'])
         except Exception as e:
             print(f"Error checking onchain membership: {e}")
-            return jsonify({"error": "Failed to check onchain membership, provide valid inputs.", "details": str(e)}), 500
+            return jsonify({"error": "Failed to check onchain membership", "details": str(e)}), 500
+    else:
+        print("Onchain slug not provided; skipping onchain membership check.")
 
+    # Respond with boolean values for offchain and appropriate message for onchain
     return jsonify({
         "voter": voter,
         "offchain": is_offchain_member,
         "onchain": is_onchain_member,
-        "is_member": is_offchain_member or is_onchain_member
+        "is_member": is_offchain_member if onchain_slug is None else (is_offchain_member or is_onchain_member)
     })
 
 
