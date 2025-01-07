@@ -91,7 +91,31 @@
   "error": "Invalid offchain cursor format. Cursor must be an integer."
 }</code></pre>
 
+
     <hr>
+        <h2>3. Is Member Endpoint</h2>
+        <p><strong>Endpoint:</strong> <code>/is_member/&lt;space&gt;</code></p>
+        <p><strong>Method:</strong> <code>GET</code></p>
+        <p><strong>Description:</strong> Checks if a given address is a member of the specified DAO space.</p>
+        <p><strong>URL Parameters:</strong></p>
+        <ul>
+            <li><code>space</code> (required): The Snapshot space identifier (e.g., <code>arbitrumfoundation.eth</code>).</li>
+        </ul>
+        <p><strong>Query Parameters:</strong></p>
+        <ul>
+            <li><code>voter</code> (required): The Ethereum address to check.</li>
+            <li><code>onchain</code> (optional): The on-chain slug for the DAO space (e.g., <code>arbitrum</code>).</li>
+        </ul>
+        <p><strong>Example Request:</strong></p>
+        <code>GET /is_member/arbitrumfoundation.eth?voter=0xDB6A3e437D6D3F5AC5f7C0D21Ba3F44Fe3A4F3a3&onchain=arbitrum</code>
+        <p><strong>Example Response:</strong></p>
+        <pre>{
+    "voter": "0xDB6A3e437D6D3F5AC5f7C0D21Ba3F44Fe3A4F3a3",
+    "offchain": true,
+    "onchain": false,
+    "is_member": true
+}</pre>
+        <hr>
 
     <h3>Parameter Combinations</h3>
     <ol>
@@ -114,6 +138,10 @@
         <li><strong>Request with Data Refresh</strong></li>
         <p><strong>URL:</strong> <code>/members/ens.eth?refresh=true</code></p>
         <p><strong>Description:</strong> Forces a refresh of cached data for the specified space.</p>
+
+        <li><strong>Request with Data Refresh</strong></li>
+            <p><strong>URL:</strong> <code>/is_member/arbitrumfoundation.eth?voter=0xDB6A3e437D6D3F5AC5f7C0D21Ba3F44Fe3A4F3a3&onchain=arbitrum</code></p>
+            <p><strong>Description:</strong>Checks if a voter is a member both on onchain and offchain DAO.</p>
     </ol>
 </body>
 </html>
