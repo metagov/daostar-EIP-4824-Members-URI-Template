@@ -233,6 +233,116 @@ async def fetch_onchain_members(onchain_slug, cursor=None, refresh=False):
     return onchain_members, delegates, last_cursor
 
 
+@app.route('/is_member/<space>', methods=['GET'])
+async def is_member(space):
+    """Endpoint to check if an address is a member."""
+    voter = request.args.get('voter')
+    onchain_slug = request.args.get('onchain')
+
+    if not voter:
+        return jsonify({"error": "Voter address is required"}), 400
+
+    if not space:
+        return jsonify({"error": "Space identifier is required"}), 400
+
+    is_offchain_member = False
+    is_onchain_member = False
+
+    try:
+        url = "https://hub.snapshot.org/graphql"
+        query = """
+        query isMember ($where: VoteWhere, $first: Int!) {
+            votes(where: $where, first: $first) {
+                id
+            }
+        }
+        """
+        variables = {"where": {"voter": voter, "space": space}, "first": 1}
+        snapshot_result = await safe_request(url, {'query': query, 'variables': variables})
+
+        if snapshot_result is None or 'data' not in snapshot_result or 'votes' not in snapshot_result['data']:
+            raise ValueError("Invalid response from Snapshot API")
+
+        is_offchain_member = bool(snapshot_result['data']['votes'])
+    except Exception as e:
+        print(f"Error checking offchain membership: {e}")
+        return jsonify({"error": "Failed to check offchain membership, provide valid inputs.", "details": str(e)}), 500
+
+    if onchain_slug:
+        try:
+            api_url = "https://api.tally.xyz/query"
+            api_key = os.getenv('TALLY_API_KEY')
+
+            if not api_key:
+                return jsonify({"error": "TALLY_API_KEY environment variable not set"}), 500
+
+            query_org_id = """
+            query {
+              organizationSlugToId(slug: "%s")
+            }
+            """ % onchain_slug
+
+            headers = {
+                "Api-key": f"{api_key}",
+                "Content-Type": "application/json"
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(api_url, json={"query": query_org_id}, headers=headers) as response_org_id:
+                    if response_org_id.status != 200:
+                        error_message = await response_org_id.text()
+                        raise ValueError(f"Failed to fetch organization ID: {error_message}")
+
+                    response_data = await response_org_id.json()
+                    if 'data' not in response_data or 'organizationSlugToId' not in response_data['data']:
+                        raise ValueError("Invalid response from Tally API for organization ID")
+
+                    organization_id = response_data['data']['organizationSlugToId']
+
+                # Query delegates for the specific voter address
+                query_delegate = """
+                query Delegates($input: DelegatesInput!) {
+                  delegates(input: $input) {
+                    nodes {
+                      ... on Delegate {
+                        account {
+                          address
+                        }
+                      }
+                    }
+                  }
+                }
+                """
+                variables_delegate = {
+                    "input": {
+                        "filters": {
+                            "organizationId": organization_id,
+                            "address": voter
+                        }
+                    }
+                }
+
+                async with session.post(api_url, json={"query": query_delegate, "variables": variables_delegate}, headers=headers) as response_delegate:
+                    if response_delegate.status != 200:
+                        error_message = await response_delegate.text()
+                        raise ValueError(f"Failed to fetch delegate data: {error_message}")
+
+                    delegate_data = await response_delegate.json()
+                    if 'data' not in delegate_data or 'delegates' not in delegate_data['data']:
+                        raise ValueError("Invalid response from Tally API for delegate data")
+
+                    is_onchain_member = bool(delegate_data['data']['delegates']['nodes'])
+        except Exception as e:
+            print(f"Error checking onchain membership: {e}")
+            return jsonify({"error": "Failed to check onchain membership, provide valid inputs.", "details": str(e)}), 500
+
+    return jsonify({
+        "voter": voter,
+        "offchain": is_offchain_member,
+        "onchain": is_onchain_member,
+        "is_member": is_offchain_member or is_onchain_member
+    })
+
 
 @app.route('/members/<space>', methods=['GET'])
 async def get_unique_voters(space):
